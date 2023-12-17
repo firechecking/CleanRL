@@ -23,6 +23,8 @@ class SarsaConfig():
         self.load_path = 'q_table.pkl'
         self.save_interval = 100
 
+        self.e_lambda = 0.8
+
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -55,6 +57,7 @@ class Sarsa():
             state = self._simple_maybe_add_state(state)
 
             epoch_reward = 0
+            e_table = {}
             for epoch_step in range(self.config.epoch_steps):
                 ############### 选择action ###############
                 if random.random() < self.e_greedy:
@@ -74,7 +77,15 @@ class Sarsa():
                 # q_observation = reward + self.config.gamma * np.max(self.q_table[str(next_state)])
                 next_action = np.argmax(self.q_table[str(next_state)])
                 q_observation = reward + self.config.gamma * self.q_table[str(next_state)][next_action]
-                self.q_table[str(state)][action] += self.config.lr * (q_observation - self.q_table[str(state)][action])
+
+                ### e表中记录路径
+                e_table[str(state)] = np.array([0.] * self.env.action_space.n)
+                e_table[str(state)][action] = 1
+
+                ### 更新所有走过的q表，e表用lambda衰减
+                for state_str in e_table.keys():
+                    self.q_table[state_str] += self.config.lr * e_table[state_str] * (q_observation - self.q_table[str(state)][action])
+                    e_table[state_str] = e_table[state_str] * self.config.e_lambda
 
                 if done or epoch_step >= self.config.epoch_steps - 1:
                     print('epoch: {}, steps: {}, greedy: {}, reward: {}'.format(epoch, epoch_step, self.e_greedy, epoch_reward))

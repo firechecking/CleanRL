@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     ############### 训练 ###############
     rl = Sarsa(env, SarsaConfig())
-    # rl.learn()
+    rl.learn()
 
     ############### 测试 ###############
     rl.env = gym.make('CartPole-v1', render_mode='human').unwrapped
