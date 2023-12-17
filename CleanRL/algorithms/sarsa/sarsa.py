@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/12/17 16:20
+# @Time    : 2023/12/17 21:17
 # @Author  : Patrick
 # @Email   : firechecking@gmail.com
-# @File    : q_learning.py
+# @File    : sarsa.py
 # @Software: CleanRL
-# @Description: q_learning
+# @Description: sarsa
+
 
 import os, random, pickle, time
 import numpy as np
 
 
-class QLearningConfig():
+class SarsaConfig():
     def __init__(self, **kwargs):
         self.epoches = 10000
         self.epoch_steps = 500
@@ -26,8 +27,8 @@ class QLearningConfig():
             setattr(self, k, v)
 
 
-class QLearning():
-    def __init__(self, env, config: QLearningConfig):
+class Sarsa():
+    def __init__(self, env, config: SarsaConfig):
         self.env = env
         self.config = config
 
@@ -70,7 +71,9 @@ class QLearning():
                 epoch_reward += reward
 
                 ############### 更新q表 ###############
-                q_observation = reward + self.config.gamma * np.max(self.q_table[str(next_state)])
+                # q_observation = reward + self.config.gamma * np.max(self.q_table[str(next_state)])
+                next_action = np.argmax(self.q_table[str(next_state)])
+                q_observation = reward + self.config.gamma * self.q_table[str(next_state)][next_action]
                 self.q_table[str(state)][action] += self.config.lr * (q_observation - self.q_table[str(state)][action])
 
                 if done or epoch_step >= self.config.epoch_steps - 1:
