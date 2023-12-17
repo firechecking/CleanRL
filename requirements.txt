@@ -1,0 +1,5 @@
+numpy
+torch
+nes_py==8.2.1
+gym-super-mario-bros==7.4.0
+gym==0.26.2
