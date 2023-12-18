@@ -14,8 +14,8 @@ class QLearningConfig():
     def __init__(self, **kwargs):
         self.epoches = 10000
         self.epoch_steps = 500
-        self.e_greedy_start = 0.1
-        self.e_greedy_end = 0.95
+        self.e_greedy_start = 0.95
+        self.e_greedy_end = 0.1
         self.e_greedy_decay = 2000
         self.gamma = 0.9
         self.lr = 0.1
@@ -56,7 +56,7 @@ class QLearning():
             epoch_reward = 0
             for epoch_step in range(self.config.epoch_steps):
                 ############### 选择action ###############
-                if random.random() < self.e_greedy:
+                if random.random() > self.e_greedy:
                     action = np.argmax(self.q_table[str(state)])
                 else:
                     action = self.env.action_space.sample()
@@ -81,7 +81,7 @@ class QLearning():
                     break
 
                 state = next_state
-            self.e_greedy = min(self.config.e_greedy_end, self.e_greedy + self.e_greedy_decay_per_epoch)
+            self.e_greedy = max(self.config.e_greedy_end, self.e_greedy + self.e_greedy_decay_per_epoch)
 
     def play(self):
         print('start play...')
