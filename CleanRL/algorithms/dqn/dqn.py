@@ -37,6 +37,8 @@ class DQNConfig():
         self.batch_size = 32
         self.tau = 0.001
 
+        self.double_q = True
+
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -118,7 +120,11 @@ class DQN():
 
         ############### 计算loss ###############
         with torch.no_grad():
-            q_observation = reward + self.config.gamma * torch.max(self.t_net(next_state), dim=-1).values
+            if self.config.double_q:
+                t_action = torch.argmax(self.q_net(next_state), dim=-1)
+                q_observation = reward + self.config.gamma * self.t_net(next_state).gather(1, t_action.unsqueeze(1)).squeeze(1)
+            else:
+                q_observation = reward + self.config.gamma * torch.max(self.t_net(next_state), dim=-1).values
         q_eval = self.q_net(state).gather(1, action.unsqueeze(1)).squeeze(1)
         criterion = torch.nn.SmoothL1Loss()
         loss = criterion(q_eval, q_observation)

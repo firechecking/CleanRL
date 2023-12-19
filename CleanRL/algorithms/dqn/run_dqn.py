@@ -36,4 +36,4 @@ if __name__ == "__main__":
 
     ############### 测试 ###############
     rl.env = gym.make('CartPole-v1', render_mode='human').unwrapped
-    rl.play(epoch=799)
+    rl.play(epoch=999)
