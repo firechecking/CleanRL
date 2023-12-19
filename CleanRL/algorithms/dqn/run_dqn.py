@@ -12,17 +12,27 @@ from dqn import DQN, DQNConfig
 
 
 class QNet(torch.nn.Module):
-    def __init__(self, n_observations, n_actions):
+    def __init__(self, n_observations, n_actions, dueling=True):
         super(QNet, self).__init__()
         self.n_observations = n_observations
         self.n_actions = n_actions
+        self.dueling = dueling
 
         self.layer1 = torch.nn.Linear(n_observations, 100)
-        self.layer2 = torch.nn.Linear(100, n_actions)
+        if self.dueling:
+            self.layer_v = torch.nn.Linear(100, 1)
+            self.layer_a = torch.nn.Linear(100, n_actions)
+        else:
+            self.layer_q = torch.nn.Linear(100, n_actions)
 
     def forward(self, batch_state):
         x = torch.relu(self.layer1(batch_state))
-        return self.layer2(x)
+        if self.dueling:
+            v = self.layer_v(x)
+            a = self.layer_a(x)
+            return v + a - a.mean()
+        else:
+            return self.layer_q(x)
 
 
 if __name__ == "__main__":
