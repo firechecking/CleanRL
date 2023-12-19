@@ -32,8 +32,8 @@ if __name__ == "__main__":
 
     ############### 训练 ###############
     rl = DQN(env, q_net, DQNConfig())
-    # rl.learn()
+    rl.learn()
 
     ############### 测试 ###############
     rl.env = gym.make('CartPole-v1', render_mode='human').unwrapped
-    rl.play(epoch=2999)
+    rl.play(epoch=799)
