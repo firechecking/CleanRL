@@ -7,7 +7,9 @@
 # @Description: dqn
 
 import os, random, time, copy
+import numpy as np
 import torch
+from CleanRL.common.sum_tree import SumTree
 
 
 def stack_data(batch_data, device='cpu'):
@@ -38,6 +40,9 @@ class DQNConfig():
         self.tau = 0.001
 
         self.double_q = True
+        self.prioritized_replay = True
+        self.prioritized_alpha = 0.6
+        self.prioritized_beta = 0.4
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -63,6 +68,8 @@ class DQN():
         self.t_net = copy.deepcopy(self.q_net)
         self.t_net.eval()
         self.replay_buffer = []
+        if self.config.prioritized_replay:
+            self.replay_buffer = SumTree(self.config.replay_buffer_size)
 
     def learn(self):
         print('start train...')
@@ -89,9 +96,12 @@ class DQN():
                 epoch_reward += reward
 
                 ############### replay buffer ###############
-                self.replay_buffer.append((state, action, reward, next_state))
-                if len(self.replay_buffer) > self.config.replay_buffer_size:
-                    self.replay_buffer.pop(0)
+                if self.config.prioritized_replay:
+                    self.replay_buffer.add(data=(state, action, reward, next_state), priority=None)
+                else:
+                    self.replay_buffer.append((state, action, reward, next_state))
+                    if len(self.replay_buffer) > self.config.replay_buffer_size:
+                        self.replay_buffer.pop(0)
 
                 if len(self.replay_buffer) >= self.config.replay_warm_up:
                     self._one_batch_train()
@@ -112,7 +122,14 @@ class DQN():
 
     def _one_batch_train(self):
         ############ 构造batch数据 ############
-        batch_data = random.sample(self.replay_buffer, self.config.batch_size)
+        if self.config.prioritized_replay:
+            batch_idx, batch_data, sampling_weight = self.replay_buffer.sample(self.config.batch_size)
+            ############ 计算重要性采样补偿系数 ############
+            bias_max_weight = (len(self.replay_buffer) * self.replay_buffer.min_priority) ** (-self.config.prioritized_beta)
+            bias_weight = (len(self.replay_buffer) * np.array(sampling_weight)) ** (-self.config.prioritized_beta)
+            bias_weight = torch.tensor(bias_weight / bias_max_weight, dtype=torch.float32, device=self.device)
+        else:
+            batch_data = random.sample(self.replay_buffer, self.config.batch_size)
         state = stack_data([data[0] for data in batch_data], self.device)
         action = stack_data([data[1] for data in batch_data], self.device)
         reward = stack_data([data[2] for data in batch_data], self.device)
@@ -126,8 +143,20 @@ class DQN():
             else:
                 q_observation = reward + self.config.gamma * torch.max(self.t_net(next_state), dim=-1).values
         q_eval = self.q_net(state).gather(1, action.unsqueeze(1)).squeeze(1)
-        criterion = torch.nn.SmoothL1Loss()
-        loss = criterion(q_eval, q_observation)
+        if self.config.prioritized_replay:
+            criterion = torch.nn.SmoothL1Loss(reduction='none')
+            loss = criterion(q_eval, q_observation)
+
+            ############ 更新priority ############
+            for idx, priority in zip(batch_idx, loss):
+                self.replay_buffer.update_priority(idx, torch.pow(priority.cpu().detach() + 1e-2, self.config.prioritized_alpha).item())
+
+            ############ 重要性采样补偿 ############
+            loss = torch.mul(loss, bias_weight)
+            loss = loss.mean()
+        else:
+            criterion = torch.nn.SmoothL1Loss()
+            loss = criterion(q_eval, q_observation)
 
         ############### 更新模型 ###############
         self.optimizer.zero_grad()

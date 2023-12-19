@@ -24,7 +24,10 @@ class SumTree():
         self.tree_leaf_pos = 0  # 待插入的叶子结点位置
 
         self.length = 0
-        self.max_priority = 0
+        self.min_priority, self.max_priority = 1.0, 1.0
+
+    def __len__(self):
+        return self.length
 
     def add(self, data, priority=None):
         self.length = min(self.length + 1, self.capacity)
@@ -34,6 +37,8 @@ class SumTree():
             priority = self.max_priority
         elif priority > self.max_priority:
             self.max_priority = priority
+        if priority < self.min_priority:
+            self.min_priority = priority
 
         ############ 实现插入 ############
         leaf_real_idx = self.leaf_idx_offset + self.tree_leaf_pos
@@ -84,7 +89,7 @@ class SumTree():
 
             batch_data_idx.append(son_idx)
 
-        return batch_data_idx, [self.dataset[idx] for idx in batch_data_idx]
+        return batch_data_idx, [self.dataset[idx] for idx in batch_data_idx], [self.tree[idx] for idx in batch_data_idx]
 
 
 if __name__ == "__main__":
@@ -105,7 +110,7 @@ if __name__ == "__main__":
         counter = defaultdict(int)
         total = 0
         for i in range(10000):
-            for idx, v in zip(*sum_tree.sample(3)):
+            for idx, v, _ in zip(*sum_tree.sample(3)):
                 counter[v] += 1
                 total += 1
 
