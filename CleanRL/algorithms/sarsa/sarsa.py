@@ -17,7 +17,7 @@ class SarsaConfig():
         self.epoch_steps = 500
         self.e_greedy_start = 0.95
         self.e_greedy_end = 0.1
-        self.e_greedy_decay = 2000
+        self.e_greedy_decay = 5000
         self.gamma = 0.9
         self.lr = 0.1
         self.load_path = 'q_table.pkl'
@@ -58,13 +58,13 @@ class Sarsa():
 
             epoch_reward = 0
             e_table = {}
-            for epoch_step in range(self.config.epoch_steps):
-                ############### 选择action ###############
-                if random.random() > self.e_greedy:
-                    action = np.argmax(self.q_table[str(state)])
-                else:
-                    action = self.env.action_space.sample()
+            ############### 在循环外选择action ###############
+            if random.random() > self.e_greedy:
+                action = np.argmax(self.q_table[str(state)])
+            else:
+                action = self.env.action_space.sample()
 
+            for epoch_step in range(self.config.epoch_steps):
                 ############### 执行action ###############
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
                 next_state = self._simple_maybe_add_state(next_state)
@@ -75,7 +75,10 @@ class Sarsa():
 
                 ############### 更新q表 ###############
                 # q_observation = reward + self.config.gamma * np.max(self.q_table[str(next_state)])
-                next_action = np.argmax(self.q_table[str(next_state)])
+                if random.random() > self.e_greedy:
+                    next_action = np.argmax(self.q_table[str(next_state)])
+                else:
+                    next_action = self.env.action_space.sample()
                 q_observation = reward + self.config.gamma * self.q_table[str(next_state)][next_action]
 
                 ### e表中记录路径
@@ -95,6 +98,8 @@ class Sarsa():
                     break
 
                 state = next_state
+                ############### 直接执行上一轮的next_action ###############
+                action = next_action
             self.e_greedy = max(self.config.e_greedy_end, self.e_greedy + self.e_greedy_decay_per_epoch)
 
     def play(self):
