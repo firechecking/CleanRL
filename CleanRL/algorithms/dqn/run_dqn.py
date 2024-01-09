@@ -20,22 +20,43 @@ class QNet(torch.nn.Module):
         self.config = config
 
         LinearLayer = NoisyLinear if self.config.noisy else torch.nn.Linear
-        
+
         self.layer1 = torch.nn.Linear(n_observations, 320)
         if self.config.dueling:
-            self.layer_v = LinearLayer(320, 1)
-            self.layer_a = LinearLayer(320, n_actions)
+            self.layer_v = LinearLayer(320, self.config.distributional_atom_size)
+            self.layer_a = LinearLayer(320, n_actions * self.config.distributional_atom_size)
         else:
-            self.layer_q = LinearLayer(320, n_actions)
+            self.layer_q = LinearLayer(320, n_actions * self.config.distributional_atom_size)
 
-    def forward(self, batch_state):
+        if self.config.distributional_atom_size > 1:
+            self.support_z = torch.linspace(self.config.distributional_v_min, self.config.distributional_v_max, self.config.distributional_atom_size)
+
+    def forward(self, batch_state, return_dist=False):
         x = torch.relu(self.layer1(batch_state))
         if self.config.dueling:
             v = self.layer_v(x)
             a = self.layer_a(x)
-            return v + a - a.mean()
+            if self.config.distributional_atom_size <= 1:
+                return v + a - a.mean()
+
+            ############### Distributional RL计算分布概率 ###############
+            v = v.view(-1, 1, self.config.distributional_atom_size)
+            a = a.view(-1, self.n_actions, self.config.distributional_atom_size)
+            q_atoms = v + a - a.mean(dim=1, keepdim=True)
+            dist = torch.softmax(q_atoms, dim=-1).clamp(min=1e-3)
         else:
-            return self.layer_q(x)
+            q = self.layer_q(x)
+            if self.config.distributional_atom_size <= 1:
+                return q
+            ############### Distributional RL计算分布概率 ###############
+            q = q.view(-1, self.n_actions, self.config.distributional_atom_size)
+            dist = torch.softmax(q, dim=-1).clamp(min=1e-3)
+
+        if return_dist:
+            return dist
+
+        ############### 利用分布概率和支持向量，计算期望 ###############
+        return torch.sum(dist * self.support_z, dim=2)
 
     def reset_noise(self):
         if not self.config.noisy: return
@@ -74,8 +95,8 @@ if __name__ == "__main__":
 
     ############### 训练 ###############
     rl = DQN(env, q_net, config)
-    # rl.learn()
+    rl.learn()
 
     ############### 测试 ###############
     rl.env = gym.make('CartPole-v1', render_mode='human').unwrapped
-    rl.play(epoch=599)
+    rl.play(epoch=999)

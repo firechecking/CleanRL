@@ -35,6 +35,7 @@ class DQNConfig():
         self.save_interval = 100
         self.load_path = None
         self.save_ckpt_path = './q_net/'
+        self.grad_clip_norm = 1
 
         ############### replay_buffer, target_net 相关参数 ###############
         self.replay_buffer_size = 10000
@@ -51,6 +52,11 @@ class DQNConfig():
         ############### 二级优化(n_step, noisy)相关参数###############
         self.n_step_learning = 3
         self.noisy = True
+
+        ############### 三级优化(distributional)相关参数###############
+        self.distributional_atom_size = 51
+        self.distributional_v_min = -10
+        self.distributional_v_max = 100
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -115,14 +121,18 @@ class DQN():
                     if len(self.replay_buffer) > self.config.replay_buffer_size:
                         self.replay_buffer.pop(0)
 
+                loss = None
                 if len(self.replay_buffer) >= self.config.replay_warm_up:
-                    self._one_batch_train()
+                    loss = self._one_batch_train()
                     ############### 增量式更新t_net模型 ###############
                     for param, target_param in zip(self.q_net.parameters(), self.t_net.parameters()):
                         target_param.data.copy_(self.config.tau * param.data + (1 - self.config.tau) * target_param.data)
 
                 if done or epoch_step >= self.config.epoch_steps - 1:
-                    print('epoch: {}, steps: {}, greedy: {}, reward: {}'.format(epoch, epoch_step, self.e_greedy, epoch_reward))
+                    if self.config.noisy:
+                        print('epoch: {}, loss: {}, steps: {}, reward: {}'.format(epoch, loss, epoch_step, epoch_reward))
+                    else:
+                        print('epoch: {}, loss: {}, steps: {}, greedy: {}, reward: {}'.format(epoch, loss, epoch_step, self.e_greedy, epoch_reward))
                     ############### 保存模型 ###############
                     if (epoch + 1) % self.config.save_interval == 0:
                         torch.save(self.q_net.state_dict(),
@@ -175,20 +185,54 @@ class DQN():
         ############ 构造batch数据 ############
         state, action, reward, next_state, n_step, batch_idx, bias_weight = self._sample_batch_data()
 
-        ############### 计算loss ###############
+        ############### 计算delta_z ###############
+        if self.config.distributional_atom_size > 1:
+            delta_z = float(self.config.distributional_v_max - self.config.distributional_v_min) / (self.config.distributional_atom_size - 1)
+
         with torch.no_grad():
             ############### 按n-step公式计算gamma ###############
             gamma = stack_data([self.config.gamma ** n for n in n_step], self.device)
+
+            ############### 选择next_action ###############
             if self.config.double_q:
                 t_action = torch.argmax(self.q_net(next_state), dim=-1)
             else:
                 t_action = torch.argmax(self.t_net(next_state), dim=-1)
-            q_observation = reward + gamma * self.t_net(next_state).gather(1, t_action.unsqueeze(1)).squeeze(1)
+
+            ############### 计算目标价值 ###############
+            if self.config.distributional_atom_size > 1:
+                ############### 计算next_action的价值分布概率 ###############
+                t_dist = self.t_net(next_state, return_dist=True)
+                t_dist = t_dist[range(self.config.batch_size), t_action]
+                ############### 阶段1：价值迭代 ###############
+                t_z = reward.unsqueeze(1) + gamma.unsqueeze(1) * self.t_net.support_z
+                t_z = t_z.clamp(self.config.distributional_v_min, self.config.distributional_v_max)
+                ############### 阶段2：价值投影 ###############
+                b = (t_z - self.config.distributional_v_min) / delta_z
+                l = b.floor().long()
+                u = b.ceil().long()
+                offset = torch.linspace(0, (self.config.batch_size - 1) * self.config.distributional_atom_size, self.config.batch_size) \
+                    .long().unsqueeze(1).expand(self.config.batch_size, self.config.distributional_atom_size).to(self.device)
+                proj_dist = torch.zeros(t_dist.size(), device=self.device)
+                proj_dist.view(-1).index_add_(0,
+                                              (l + offset).view(-1),
+                                              (t_dist * (u.float() - b)).view(-1))
+                proj_dist.view(-1).index_add_(0,
+                                              (u + offset).view(-1),
+                                              (t_dist * (b - l.float())).view(-1))
+            else:
+                q_observation = reward + gamma * self.t_net(next_state).gather(1, t_action.unsqueeze(1)).squeeze(1)
 
         ############### 计算loss ###############
-        q_eval = self.q_net(state).gather(1, action.unsqueeze(1)).squeeze(1)
-        criterion = torch.nn.SmoothL1Loss(reduction='none')
-        loss = criterion(q_eval, q_observation)
+        if self.config.distributional_atom_size > 1:
+            ############### CrossEntropyLoss ###############
+            dist = self.q_net(state, return_dist=True)
+            log_p = torch.log(dist[range(self.config.batch_size), action])
+            loss = -(proj_dist * log_p).sum(1)
+        else:
+            q_eval = self.q_net(state).gather(1, action.unsqueeze(1)).squeeze(1)
+            criterion = torch.nn.SmoothL1Loss(reduction='none')
+            loss = criterion(q_eval, q_observation)
 
         if self.config.prioritized_replay:
             ############ 更新priority ############
@@ -202,7 +246,10 @@ class DQN():
         loss = loss.mean()
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), self.config.grad_clip_norm)
         self.optimizer.step()
+
+        return loss.cpu().item()
 
     def play(self, epoch, clear_noisy=True):
         print('start play...')
