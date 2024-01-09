@@ -23,8 +23,10 @@ def stack_data(batch_data, device='cpu'):
 
 class DQNConfig():
     def __init__(self, **kwargs):
+        ############### 通用参数 ###############
         self.epoches = 1000
         self.epoch_steps = 500
+        self.batch_size = 32
         self.e_greedy_start = 0.95
         self.e_greedy_end = 0.1
         self.e_greedy_decay = 500
@@ -34,17 +36,21 @@ class DQNConfig():
         self.load_path = None
         self.save_ckpt_path = './q_net/'
 
+        ############### replay_buffer, target_net 相关参数 ###############
         self.replay_buffer_size = 10000
         self.replay_warm_up = 1000
-        self.batch_size = 32
         self.tau = 0.001
 
+        ############### 一级优化(dueling, double, prioritized)相关参数###############
+        self.dueling = True
         self.double_q = True
         self.prioritized_replay = True
         self.prioritized_alpha = 0.6
         self.prioritized_beta = 0.4
 
+        ############### 二级优化(n_step, noisy)相关参数###############
         self.n_step_learning = 3
+        self.noisy = True
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -81,8 +87,12 @@ class DQN():
             state, _ = self.env.reset()
             epoch_reward = 0
             for epoch_step in range(self.config.epoch_steps):
+                ############### 每一步都随机生成新的噪音 ###############
+                self.q_net.reset_noise()
+                self.t_net.reset_noise()
+
                 ############### 选择action ###############
-                if random.random() > self.e_greedy:
+                if self.config.noisy or random.random() > self.e_greedy:
                     with torch.no_grad():
                         batch_state = stack_data([state, ], self.device)
                         q_values = self.q_net(batch_state)
@@ -194,12 +204,14 @@ class DQN():
         loss.backward()
         self.optimizer.step()
 
-    def play(self, epoch):
+    def play(self, epoch, clear_noisy=True):
         print('start play...')
         ############### 加载训练后的模型 ###############
         ckpt_fn = os.path.join(self.config.save_ckpt_path, 'ckpt_{}.pth'.format(epoch))
         self.q_net.load_state_dict(torch.load(ckpt_fn, map_location='cpu'))
         self.q_net.eval()
+        if clear_noisy:
+            self.q_net.zero_noise()
 
         state, _ = self.env.reset()
         total_reward = 0
