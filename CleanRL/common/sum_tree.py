@@ -66,7 +66,7 @@ class SumTree():
             if parent_idx == 0:
                 break
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, n_step=1):
         ############ 分段 ############
         seg = self.tree[0] / batch_size
         batch_data_idx = []
@@ -89,7 +89,21 @@ class SumTree():
 
             batch_data_idx.append(son_idx)
 
-        return batch_data_idx, [self.dataset[idx] for idx in batch_data_idx], [self.tree[idx] for idx in batch_data_idx]
+        ############ 返回连续多步数据 ############
+        batch_seq_data = []
+        for idx in batch_data_idx:
+            seq_data = [self.dataset[idx]]
+            while len(seq_data) < n_step:
+                ############ done之后是下一局游戏数据，所以需要截断 ############
+                done = seq_data[-1][4]
+                if done: break
+
+                next_leaf_idx = self.leaf_idx_offset + (idx + len(seq_data) - self.leaf_idx_offset) % self.capacity
+                if next_leaf_idx not in self.dataset: break
+                seq_data.append(self.dataset[next_leaf_idx])
+            batch_seq_data.append(seq_data)
+
+        return batch_data_idx, batch_seq_data, [self.tree[idx] for idx in batch_data_idx]
 
 
 if __name__ == "__main__":

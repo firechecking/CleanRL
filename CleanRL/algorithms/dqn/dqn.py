@@ -44,6 +44,8 @@ class DQNConfig():
         self.prioritized_alpha = 0.6
         self.prioritized_beta = 0.4
 
+        self.n_step_learning = 3
+
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -97,9 +99,9 @@ class DQN():
 
                 ############### replay buffer ###############
                 if self.config.prioritized_replay:
-                    self.replay_buffer.add(data=(state, action, reward, next_state), priority=None)
+                    self.replay_buffer.add(data=(state, action, reward, next_state, done), priority=None)
                 else:
-                    self.replay_buffer.append((state, action, reward, next_state))
+                    self.replay_buffer.append((state, action, reward, next_state, done))
                     if len(self.replay_buffer) > self.config.replay_buffer_size:
                         self.replay_buffer.pop(0)
 
@@ -120,45 +122,74 @@ class DQN():
                 state = next_state
             self.e_greedy = max(self.config.e_greedy_end, self.e_greedy + self.e_greedy_decay_per_epoch)
 
-    def _one_batch_train(self):
-        ############ 构造batch数据 ############
+    def _sample_batch_data(self):
+        ############ 采样batch_size组n-step数据 ############
+        bias_weight = None
         if self.config.prioritized_replay:
-            batch_idx, batch_data, sampling_weight = self.replay_buffer.sample(self.config.batch_size)
+            batch_idx, batch_seq_data, sampling_weight = self.replay_buffer.sample(self.config.batch_size, self.config.n_step_learning)
             ############ 计算重要性采样补偿系数 ############
             bias_max_weight = (len(self.replay_buffer) * self.replay_buffer.min_priority) ** (-self.config.prioritized_beta)
             bias_weight = (len(self.replay_buffer) * np.array(sampling_weight)) ** (-self.config.prioritized_beta)
             bias_weight = torch.tensor(bias_weight / bias_max_weight, dtype=torch.float32, device=self.device)
         else:
-            batch_data = random.sample(self.replay_buffer, self.config.batch_size)
-        state = stack_data([data[0] for data in batch_data], self.device)
-        action = stack_data([data[1] for data in batch_data], self.device)
-        reward = stack_data([data[2] for data in batch_data], self.device)
-        next_state = stack_data([data[3] for data in batch_data], self.device)
+            batch_idx = random.sample(range(len(self.replay_buffer)), self.config.batch_size)
+            batch_seq_data = []
+            for idx in batch_idx:
+                seq_data = [self.replay_buffer[idx]]
+                while len(seq_data) < self.config.n_step_learning:
+                    if seq_data[-1][4]: break
+                    if idx + len(seq_data) >= len(self.replay_buffer): break
+                    seq_data.append(self.replay_buffer[idx + len(seq_data)])
+                batch_seq_data.append(seq_data)
+
+        ############ 用累积的n-step数据重构batch数据 ############
+        batch_data = []
+        for seq_data in batch_seq_data:
+            data = list(seq_data.pop(0))  # state, action, reward, next_state, done
+            data.append(len(seq_data) + 1)  # 记录每个训练样本的step数
+            if len(seq_data) > 0:  # 使用第n步next_state代替第1步next_state
+                data[3] = seq_data[-1][3]
+            ############### 按n-step公式计算reward ###############
+            for i, _data in enumerate(seq_data):
+                data[2] += (self.config.gamma ** (i + 1)) * _data[2]
+            batch_data.append(data)
+
+        batch_state = stack_data([data[0] for data in batch_data], self.device)
+        batch_action = stack_data([data[1] for data in batch_data], self.device)
+        batch_reward = stack_data([data[2] for data in batch_data], self.device)
+        batch_next_state = stack_data([data[3] for data in batch_data], self.device)
+        batch_n_step = [data[5] for data in batch_data]
+        return batch_state, batch_action, batch_reward, batch_next_state, batch_n_step, batch_idx, bias_weight
+
+    def _one_batch_train(self):
+        ############ 构造batch数据 ############
+        state, action, reward, next_state, n_step, batch_idx, bias_weight = self._sample_batch_data()
 
         ############### 计算loss ###############
         with torch.no_grad():
+            ############### 按n-step公式计算gamma ###############
+            gamma = stack_data([self.config.gamma ** n for n in n_step], self.device)
             if self.config.double_q:
                 t_action = torch.argmax(self.q_net(next_state), dim=-1)
-                q_observation = reward + self.config.gamma * self.t_net(next_state).gather(1, t_action.unsqueeze(1)).squeeze(1)
             else:
-                q_observation = reward + self.config.gamma * torch.max(self.t_net(next_state), dim=-1).values
-        q_eval = self.q_net(state).gather(1, action.unsqueeze(1)).squeeze(1)
-        if self.config.prioritized_replay:
-            criterion = torch.nn.SmoothL1Loss(reduction='none')
-            loss = criterion(q_eval, q_observation)
+                t_action = torch.argmax(self.t_net(next_state), dim=-1)
+            q_observation = reward + gamma * self.t_net(next_state).gather(1, t_action.unsqueeze(1)).squeeze(1)
 
+        ############### 计算loss ###############
+        q_eval = self.q_net(state).gather(1, action.unsqueeze(1)).squeeze(1)
+        criterion = torch.nn.SmoothL1Loss(reduction='none')
+        loss = criterion(q_eval, q_observation)
+
+        if self.config.prioritized_replay:
             ############ 更新priority ############
             for idx, priority in zip(batch_idx, loss):
                 self.replay_buffer.update_priority(idx, torch.pow(priority.cpu().detach() + 1e-2, self.config.prioritized_alpha).item())
 
             ############ 重要性采样补偿 ############
             loss = torch.mul(loss, bias_weight)
-            loss = loss.mean()
-        else:
-            criterion = torch.nn.SmoothL1Loss()
-            loss = criterion(q_eval, q_observation)
 
         ############### 更新模型 ###############
+        loss = loss.mean()
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
