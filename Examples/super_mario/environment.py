@@ -20,13 +20,13 @@ from gym_super_mario_bros.actions import SIMPLE_MOVEMENT, COMPLEX_MOVEMENT
 
 def init_env_args(parser):
     group = parser.add_argument_group(title='interactive arguments')
-    group.add_argument('--env_name', default='SuperMarioBros-v0', type=str)
+    group.add_argument('--env_name', default='SuperMarioBros-1-1-v0', type=str)
     group.add_argument('--actions', default='complex', choices=('simple', 'complex'))
     group.add_argument('--skip_frames', default=4, type=int)
     group.add_argument('--resize', default=84, type=int)
     group.add_argument('--num_stack', default=4, type=int)
     group.add_argument('--no_gray_scale', dest='gray_scale', default=True, action='store_false')
-    group.add_argument('--optimize_reward', default=False, action='store_true')
+    group.add_argument('--no_optimize_reward', dest='optimize_reward', default=True, action='store_false')
     return parser
 
 
@@ -55,11 +55,14 @@ class WrappedEnv(JoypadSpace):
 
         return self._process_one_observation(observation), total_reward, terminated, truncated, info
 
-    def reset(self):
+    def reset(self, reset_noop=-1):
         observation, info = super(WrappedEnv, self).reset()
         ############ 初始化时随机跳过帧，增加随机性 ############
-        for i in range(random.randint(0, 100)):
-            observation, _, _, _, _ = super(WrappedEnv, self).step(0)
+        if reset_noop != 0:  # -1表示随机跳过帧数，0表示不跳过，>0表示跳过指定帧数
+            if reset_noop < 0:
+                reset_noop = random.randint(0, 100)
+            for i in range(reset_noop):
+                wobservation, _, _, _, _ = super(WrappedEnv, self).step(0)
         return self._process_one_observation(observation, reset=True), info
 
     def _process_one_observation(self, observation, reset=False):
@@ -103,9 +106,9 @@ class WrappedEnv(JoypadSpace):
             if info['flag_get']:  # 通关
                 reward = reward_range[1]
             elif all_status.index(info['status']) - all_status.index(self.last_info['status']) != 0:  # 变身
-                reward = 2 * all_status.index(info['status']) - all_status.index(self.last_info['status'])
+                reward = 4 * all_status.index(info['status']) - all_status.index(self.last_info['status'])
             elif info['coins'] > self.last_info['coins']:  # 金币
-                reward = 2
+                reward = 4
             elif info['score'] > self.last_info['score']:  # 分数
                 reward = 2
             elif info['life'] > self.last_info['life']:  # 增加生命
@@ -116,7 +119,7 @@ class WrappedEnv(JoypadSpace):
                 reward = 0
             elif info['x_pos'] > self.last_info['x_pos']:  # 前进
                 reward = 1
-            elif (info['x_pos'] == self.last_info['x_pos']):
+            elif (info['x_pos'] == self.last_info['x_pos']):  # 不动
                 reward = -1
             else:
                 reward = -1

@@ -6,17 +6,23 @@
 # @Software: CleanRL
 # @Description: human_play
 
-import time, pyglet
+import time
+import numpy as np
 from pyglet.window import key
 from nes_py.wrappers import JoypadSpace
+
 import gym_super_mario_bros
 from gym_super_mario_bros.actions import COMPLEX_MOVEMENT as MOVEMENT
 
+from CleanRL.common.video_writer import PreviewWindow
+from environment import WrappedEnv, init_env_args
+from arguments import init_args
 
-class MyWindow(pyglet.window.Window):
-    ############### 主窗体，用于监听键盘事件、显示画面 ###############
+
+class ControllerWindow(PreviewWindow):
+    ############### 用于监听键盘事件、显示画面 ###############
     def __init__(self, *args, **kwargs):
-        super().__init__(width=420, height=420, vsync=False, resizable=True, *args, **kwargs)
+        super(ControllerWindow, self).__init__(*args, **kwargs)
         self._pressed_keys = []
 
     def on_key_press(self, symbol, modifiers):
@@ -24,21 +30,6 @@ class MyWindow(pyglet.window.Window):
 
     def on_key_release(self, symbol, modifiers):
         self._pressed_keys.remove(symbol)
-
-    def show(self, frame):
-        self.clear()
-        self.switch_to()
-        self.dispatch_events()
-
-        image = pyglet.image.ImageData(
-            frame.shape[1],
-            frame.shape[0],
-            'RGB',
-            frame.tobytes(),
-            pitch=frame.shape[1] * -3
-        )
-        image.blit(0, 0, width=self.width, height=self.height)
-        self.flip()
 
 
 def match_key(keys):
@@ -60,13 +51,35 @@ def human_play(env_name):
     total_reward = 0
     step = 0
     ############### 初始化环境 ###############
-    env = gym_super_mario_bros.make(env_name, apply_api_compatibility=True, render_mode='rgb_array')
-    env = JoypadSpace(env, MOVEMENT)
+    wrapped_env = True
+    if wrapped_env:
+        parser = init_args()
+        parser = init_env_args(parser)
+        args, _ = parser.parse_known_args()
+        args.env_name = 'SuperMarioBros-1-1-v0'
+        args.optimize_reward = True
+        args.resize = 0
+        args.gray_scale = False
+        env = WrappedEnv(args)
+    else:
+        env = gym_super_mario_bros.make(env_name, apply_api_compatibility=True, render_mode='rgb_array')
+        env = JoypadSpace(env, MOVEMENT)
+
     state, _ = env.reset()
-    controller_window = MyWindow()
+    controller_window = ControllerWindow()
 
     ############### 游戏主循环 ###############
     while True:
+        if wrapped_env:
+            if args.gray_scale:
+                state = state[-1].squeeze(0)
+                state = np.repeat(state[:, :, np.newaxis], 3, axis=2).numpy()
+            else:
+                state = np.transpose(state[-1, :, :, :].numpy(), (1, 2, 0))
+            if args.resize:
+                state = state * 255
+            state = state.astype(np.uint8)
+
         controller_window.show(state)
         step += 1
 
@@ -86,7 +99,10 @@ def human_play(env_name):
             time.sleep(1)
             break
 
-        time.sleep(1 / 60)
+        if wrapped_env:
+            time.sleep(1 / 15)
+        else:
+            time.sleep(1 / 60)
 
 
 if __name__ == "__main__":

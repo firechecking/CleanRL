@@ -2,9 +2,13 @@
 # @Time    : 2024/1/10 21:46
 # @Author  : Patrick
 # @Email   : firechecking@gmail.com
-# @File    : run_super_mario_dqn.py
+# @File    : run_train.py
 # @Software: CleanRL
-# @Description: run_super_mario_dqn
+# @Description: run_train
+
+import sys
+
+sys.path.append('../../')
 
 import numpy as np
 import torch
@@ -30,10 +34,10 @@ class Net(torch.nn.Module):
             torch.nn.ReLU(),
             torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
             torch.nn.ReLU(),
-            torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1),
+            torch.nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
             torch.nn.ReLU(),
             torch.nn.Flatten(),
-            torch.nn.Linear(6272, 512),
+            torch.nn.Linear(3136, 512),
             torch.nn.ReLU(),
         )
 
@@ -80,6 +84,17 @@ class Net(torch.nn.Module):
         else:
             self.output_layer.reset_noise()
 
+    def zero_noise(self):
+        if not self.config.noisy_net: return
+        if self.config.dueling:
+            self.value_layer.w_epsilon.zero_()
+            self.value_layer.b_epsilon.zero_()
+            self.advantage_layer.w_epsilon.zero_()
+            self.advantage_layer.b_epsilon.zero_()
+        else:
+            self.output_layer.w_epsilon.zero_()
+            self.output_layer.b_epsilon.zero_()
+
 
 def _print_args(config):
     print('############### config ###############')
@@ -104,7 +119,7 @@ if __name__ == "__main__":
 
     ############### 创建环境 ###############
     stages = None
-    if args.env_name.startswith('SuperMarioBrosRandomStages-'):
+    if args.env_name.startswith('SuperMarioBrosRandomStages-'):  # TODO: 4-4, 8-4需要修改reward
         stages = ['1-1', '1-2', '1-3', '1-4',
                   '2-1', '2-2', '2-3', '2-4',
                   '3-1', '3-2', '3-3', '3-4',
@@ -123,6 +138,7 @@ if __name__ == "__main__":
     rl.learn()
 
     ############### 模型测试 ###############
-    env = WrappedEnv(args, stages=stages, render_mode='human')
+    step = 1000000
     rl.env = env
-    rl.play(ckpt_step=1000, repeat=1, verbose=True)
+    for i in range(10):
+        rl.play(ckpt_step=step, reset_noop=i, clear_noisy=False, reset_noisy=False, verbose=False, export_video_fn=f'noop_{i}.mp4')
