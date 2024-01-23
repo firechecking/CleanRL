@@ -47,7 +47,6 @@ class REINFORCE():
 
     def learn(self):
         print('start learn...')
-        best_reward = 0
         for epoch in range(1, self.config.epoches + 1):
             ############### 重置环境 ###############
             state, _ = self.env.reset()
@@ -82,9 +81,8 @@ class REINFORCE():
                     loss = self._one_batch_train(replay_buffer)
                     print('epoch: {}, steps: {}, total_reward: {}, loss: {}'.format(epoch, epoch_step, epoch_reward, loss))
 
-                    if epoch % self.config.save_interval and epoch_reward > best_reward:
+                    if epoch % self.config.save_interval == 0:
                         torch.save(self.policy_net.state_dict(), self.config.load_path)
-                        best_reward = epoch_reward
                     break
 
     def _one_batch_train(self, replay_buffer):

@@ -43,7 +43,7 @@ class PolicyNet(torch.nn.Module):
         x = torch.relu(self.layer1(state))
         if self.config.continuous_action:
             mean = torch.tanh(self.mean_layer(x)) * self.action_range  # 取值[-action_range, action_range]
-            deviation = torch.nn.functional.softplus(self.deviation_layer(x))  # 取值>0
+            deviation = torch.nn.functional.softplus(self.deviation_layer(x)) + 0.001  # 取值>0
             return mean, deviation
         else:
             probs = torch.softmax(self.layer2(x), dim=1)
