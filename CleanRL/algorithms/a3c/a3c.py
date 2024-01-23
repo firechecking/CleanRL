@@ -30,9 +30,26 @@ class A3CConfig():
         self.save_interval = 1
 
         self.workers = 8
+        self.shared_optimizer = True
 
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+
+class SharedAdam(torch.optim.Adam):
+    def __init__(self, params, *args, **kwargs):
+        super(SharedAdam, self).__init__(params, *args, **kwargs)
+
+        for group in self.param_groups:
+            for p in group['params']:
+                state = self.state[p]
+                state['step'] = 0
+                state['exp_avg'] = torch.zeros_like(p.data)
+                state['exp_avg_sq'] = torch.zeros_like(p.data)
+
+                ############ 启用共享内存 ############
+                state['exp_avg'].share_memory_()
+                state['exp_avg_sq'].share_memory_()
 
 
 def worker(worker_name, global_net, optimizer, env_and_net_builder, config: A3CConfig):
@@ -120,7 +137,10 @@ class A3C():
 
         self.global_net.share_memory()
 
-        self.optimizer = torch.optim.Adam(self.global_net.parameters(), lr=self.config.lr)
+        if self.config.shared_optimizer:
+            self.optimizer = SharedAdam(self.global_net.parameters(), lr=self.config.lr)
+        else:
+            self.optimizer = torch.optim.Adam(self.global_net.parameters(), lr=self.config.lr)
 
         ############### 启动多个工作进程 ###############
         self.processes = []
