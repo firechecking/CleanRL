@@ -35,6 +35,7 @@ class A3CConfig():
         self.objective_entropy = 0.005
         self.unique_net = True
         self.lock = True
+        self.normalize_reward = True
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -83,6 +84,8 @@ def worker(worker_name, lock, global_nets, optimizers, env_and_net_builder, conf
 
             ############### 执行action ###############
             next_state, reward, terminated, truncated, _ = env.step(action)
+            if config.normalize_reward:
+                reward = (reward + 8.1) / 8.1
             done = terminated or truncated
             epoch_reward += reward
             replay_buffer.append((state, action, reward))
@@ -232,6 +235,8 @@ class A3C():
 
             ############### 执行action ###############
             state, reward, terminated, truncated, _ = self.env.step(action)
+            if self.config.normalize_reward:
+                reward = (reward + 8.1) / 8.1
             total_reward += reward
             is_done = terminated or truncated
 
