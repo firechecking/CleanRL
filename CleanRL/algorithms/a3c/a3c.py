@@ -32,6 +32,7 @@ class A3CConfig():
         self.workers = 8
         self.shared_optimizer = True
         self.n_steps = 3
+        self.objective_entropy = 0.005
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -125,7 +126,7 @@ def _one_step_train(global_net, local_net, optimizer, config, replay_buffer, nex
     batch_action = stack_data([data[1] for data in replay_buffer])
     dist = local_net.distribution(mean, deviation)
     ce = -dist.log_prob(batch_action)
-    actor_loss = ce * td_error.detach()
+    actor_loss = ce * td_error.detach() - config.objective_entropy * dist.entropy()
     actor_loss = actor_loss.mean()
 
     ############ 计算总的loss ############
