@@ -34,6 +34,7 @@ class A3CConfig():
         self.n_steps = 3
         self.objective_entropy = 0.005
         self.unique_net = True
+        self.lock = True
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -55,9 +56,8 @@ class SharedAdam(torch.optim.Adam):
                 state['exp_avg_sq'].share_memory_()
 
 
-def worker(worker_name, global_nets, optimizers, env_and_net_builder, config: A3CConfig):
+def worker(worker_name, lock, global_nets, optimizers, env_and_net_builder, config: A3CConfig):
     print(f'start process {worker_name}: {os.getpid()}')
-
     env, local_nets = env_and_net_builder(unique_net=config.unique_net)
     critic_loss, actor_loss = None, None
     for epoch in range(1, config.epoches + 1):
@@ -89,7 +89,7 @@ def worker(worker_name, global_nets, optimizers, env_and_net_builder, config: A3
 
             ############### 模型更新,并重新同步参数 ###############
             if len(replay_buffer) == config.n_steps or done or epoch_step == config.epoch_steps:
-                critic_loss, actor_loss = _one_step_train(global_nets, local_nets, optimizers, config, replay_buffer, next_state, done)
+                critic_loss, actor_loss = _one_step_train(lock, global_nets, local_nets, optimizers, config, replay_buffer, next_state, done)
                 for local_net, global_net in zip(local_nets, global_nets):
                     local_net.load_state_dict(global_net.state_dict())
                 replay_buffer = []
@@ -108,7 +108,7 @@ def worker(worker_name, global_nets, optimizers, env_and_net_builder, config: A3
                 break
 
 
-def _one_step_train(global_nets, local_nets, optimizers, config, replay_buffer, next_state, done):
+def _one_step_train(lock, global_nets, local_nets, optimizers, config, replay_buffer, next_state, done):
     ############ 重新forward一遍 ############
     batch_state = stack_data([data[0] for data in replay_buffer])
     if config.unique_net:
@@ -159,6 +159,8 @@ def _one_step_train(global_nets, local_nets, optimizers, config, replay_buffer, 
         loss.backward()
 
     ############ 将grad从local_net同步到global_net ############
+    if lock is not None and abs(critic_loss + actor_loss) > 100:
+        lock.acquire()
     for optimizer in optimizers:
         optimizer.zero_grad()
     for local_net, global_net in zip(local_nets, global_nets):
@@ -166,6 +168,8 @@ def _one_step_train(global_nets, local_nets, optimizers, config, replay_buffer, 
             global_param.grad = local_param.grad
     for optimizer in optimizers:
         optimizer.step()
+    if lock is not None and abs(critic_loss + actor_loss) > 100:
+        lock.release()
 
     return critic_loss.cpu().item(), actor_loss.cpu().item()
 
@@ -189,10 +193,11 @@ class A3C():
             self.optimizers = [torch.optim.Adam(net.parameters(), lr=self.config.lrs[i]) for i, net in enumerate(self.global_nets)]
 
         ############### 启动多个工作进程 ###############
+        self.lock = mp.Lock() if self.config.lock else None
         self.processes = []
         for i in range(self.config.workers):
             p = mp.Process(target=worker,
-                           args=(f'worker_{i}', self.global_nets, self.optimizers, env_and_net_builder, self.config))
+                           args=(f'worker_{i}', self.lock, self.global_nets, self.optimizers, env_and_net_builder, self.config))
             self.processes.append(p)
 
     def learn(self):

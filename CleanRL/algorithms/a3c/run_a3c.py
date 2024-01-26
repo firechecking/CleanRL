@@ -11,6 +11,15 @@ import gym
 from a3c import A3CConfig, A3C
 
 
+def init_layer(layers):
+    for layer in layers:
+        if isinstance(layer, torch.nn.Linear):
+            torch.nn.init.normal_(layer.weight, mean=0., std=0.1)
+            torch.nn.init.constant_(layer.bias, 0.)
+        elif isinstance(layer, torch.nn.Sequential):
+            init_layer(layer.children())
+
+
 class ActorCriticNet(torch.nn.Module):
     def __init__(self, input_dim, dim_actions, action_range, model_type='combine'):
         super(ActorCriticNet, self).__init__()
@@ -28,6 +37,8 @@ class ActorCriticNet(torch.nn.Module):
         if model_type != 'actor':
             ############### 包含critic相关网络 ###############
             self.value_layer = torch.nn.Linear(32, 1)
+
+        init_layer(self.children())
 
     def forward(self, state):
         hidden = torch.relu(self.shared_layer(state))
