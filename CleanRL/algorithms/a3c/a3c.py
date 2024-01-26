@@ -229,7 +229,7 @@ class A3C():
                 mean, deviation = self.global_nets[0](stack_data([state, ]))
             else:
                 mean, deviation, _ = self.global_nets[0](stack_data([state, ]))
-            dist = self.global_nets[0].distribution(mean.view(1, ).data, deviation.view(1, ).data)
+            dist = self.global_nets[0].distribution(mean.view(1, ).data, 0.00001)  # play阶段可以将方差调小减少抖动
             action = dist.sample().numpy()
             action = np.clip(action, self.env.action_space.low, self.env.action_space.high).astype('float32')
 
