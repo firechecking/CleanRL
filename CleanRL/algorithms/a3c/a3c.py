@@ -31,6 +31,7 @@ class A3CConfig():
 
         self.workers = 8
         self.shared_optimizer = True
+        self.n_steps = 3
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -56,13 +57,15 @@ def worker(worker_name, global_net, optimizer, env_and_net_builder, config: A3CC
     print(f'start process {worker_name}: {os.getpid()}')
 
     env, local_net = env_and_net_builder()
+    critic_loss, actor_loss = None, None
     for epoch in range(1, config.epoches + 1):
         ############ 同步global_net参数至local_net ############
         local_net.load_state_dict(global_net.state_dict())
 
         ############### 重置环境 ###############
         state, _ = env.reset(seed=100000 * int(worker_name.split('_')[-1]) + epoch)
-        average_reward, epoch_reward = None, 0
+        epoch_reward = 0
+        replay_buffer = []
 
         for epoch_step in range(1, config.epoch_steps + 1):
             ############ 选择action ############
@@ -76,39 +79,54 @@ def worker(worker_name, global_net, optimizer, env_and_net_builder, config: A3CC
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             epoch_reward += reward
+            replay_buffer.append((state, action, reward))
 
             ############### 模型更新,并重新同步参数 ###############
-            _one_step_train(global_net, local_net, optimizer, config, state, action, reward, next_state, done)
-            local_net.load_state_dict(global_net.state_dict())
+            if len(replay_buffer) == config.n_steps or done or epoch_step == config.epoch_steps:
+                critic_loss, actor_loss = _one_step_train(global_net, local_net, optimizer, config, replay_buffer, next_state, done)
+                local_net.load_state_dict(global_net.state_dict())
+                replay_buffer = []
 
             state = next_state
 
             if done or epoch_step == config.epoch_steps:
                 if worker_name == 'worker_0':
-                    print('epoch: {}, steps: {}, total_reward: {}'.format(epoch, epoch_step, epoch_reward))
+                    print('epoch: {}, steps: {}, critic_loss: {}, actor_loss: {}, epoch_reward: {}'.format(epoch, epoch_step, critic_loss, actor_loss,
+                                                                                                           epoch_reward))
                     if epoch % config.save_interval == 0:
                         torch.save(global_net.state_dict(), config.load_path)
                 break
 
 
-def _one_step_train(global_net, local_net, optimizer, config, state, action, reward, next_state, done):
+def _one_step_train(global_net, local_net, optimizer, config, replay_buffer, next_state, done):
     ############ 重新forward一遍 ############
-    mean, deviation, value = local_net(stack_data([state, ]))
+    batch_state = stack_data([data[0] for data in replay_buffer])
+    mean, deviation, value = local_net(batch_state)
 
-    ############ 计算td_error和critic_loss ############
+    ############ 估计最后一步的价值 ############
     if done:
         v_ = torch.tensor(0.).view(1, 1)
     else:
         with torch.no_grad():
             _, _, v_ = local_net(stack_data([next_state, ]))
-    target_v = reward + config.gamma * v_
-    td_error = target_v - value
-    critic_loss = torch.square(td_error)
+
+    ############ 计算连续多步的价值 ############
+    batch_v_target = []
+    for _, _, _reward in reversed(replay_buffer):
+        v_ = _reward + config.gamma * v_
+        batch_v_target.append(v_)
+    batch_v_target.reverse()
+
+    ############ 计算td_error和critic_loss ############
+    td_error = torch.cat(batch_v_target) - value
+    critic_loss = torch.square(td_error).mean()
 
     ############ 计算actor_loss ############
+    batch_action = stack_data([data[1] for data in replay_buffer])
     dist = local_net.distribution(mean, deviation)
-    ce = -dist.log_prob(stack_data([action, ]))
+    ce = -dist.log_prob(batch_action)
     actor_loss = ce * td_error.detach()
+    actor_loss = actor_loss.mean()
 
     ############ 计算总的loss ############
     loss = critic_loss + actor_loss
@@ -123,6 +141,8 @@ def _one_step_train(global_net, local_net, optimizer, config, state, action, rew
     for global_param, local_param in zip(global_net.parameters(), local_net.parameters()):
         global_param.grad = local_param.grad
     optimizer.step()
+
+    return critic_loss.cpu().item(), actor_loss.cpu().item()
 
 
 class A3C():
