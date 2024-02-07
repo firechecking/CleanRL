@@ -6,7 +6,7 @@
 # @Software: CleanRL
 # @Description: dpg_ddpg
 
-import os, time
+import os, time, random
 import numpy as np
 import torch
 
@@ -33,6 +33,9 @@ class DPGConfig():
         self.action_noise_end = 0.
         self.action_noise_decay = 200
 
+        self.replay_buffer_size = 10000
+        self.batch_size = 32
+
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -55,6 +58,8 @@ class DPG():
         self.action_noise = self.config.action_noise_start
         self.action_noise_decay_per_step = (self.config.action_noise_end - self.config.action_noise_start) / self.config.action_noise_decay
 
+        self.replay_buffer = []
+
     def learn(self):
         print('start learn...')
         for epoch in range(1, self.config.epoches + 1):
@@ -71,28 +76,39 @@ class DPG():
                 done = terminated or truncated
                 epoch_reward += reward
 
-                self._one_step_train(state, action, reward, next_state)
+                self.replay_buffer.append((state, action, reward, next_state, done))
+                if len(self.replay_buffer) > self.config.replay_buffer_size:
+                    self.replay_buffer.pop(0)
+
+                ############ 参数更新 ############
+                if len(self.replay_buffer) >= self.config.replay_buffer_size:
+                    self._one_batch_train()
 
                 state = next_state
 
                 if done or epoch_step == self.config.epoch_steps:
-                    print('epoch: {}, action_noise: {}, steps: {}, total_reward: {}'.format(epoch, self.action_noise, epoch_step, epoch_reward))
-                    if epoch % self.config.save_interval == 0:
-                        torch.save({'actor': self.actor.state_dict(), 'critic': self.critic.state_dict()},
-                                   self.config.load_path)
+                    if len(self.replay_buffer) >= self.config.replay_buffer_size:
+                        print('epoch: {}, action_noise: {}, steps: {}, total_reward: {}'.format(epoch, self.action_noise, epoch_step, epoch_reward))
+                        if epoch % self.config.save_interval == 0:
+                            torch.save({'actor': self.actor.state_dict(), 'critic': self.critic.state_dict()},
+                                       self.config.load_path)
 
-                    self.action_noise = max(self.action_noise + self.action_noise_decay_per_step, self.config.action_noise_end)
+                        self.action_noise = max(self.action_noise + self.action_noise_decay_per_step, self.config.action_noise_end)
                     break
 
-    def _one_step_train(self, state, action, reward, next_state):
-        state = stack_data([state, ])
-        action = stack_data([action, ])
-        next_state = stack_data([next_state, ])
+    def _one_batch_train(self):
+        ############ 构造batch数据 ############
+        batch_data = random.sample(self.replay_buffer, self.config.batch_size)
+        state = stack_data([data[0] for data in batch_data]).to(torch.float32)
+        action = stack_data([data[1] for data in batch_data]).to(torch.float32)
+        reward = stack_data([data[2] for data in batch_data]).to(torch.float32)
+        next_state = stack_data([data[3] for data in batch_data]).to(torch.float32)
+
         ############ 训练critic ############
         with torch.no_grad():
             next_action = self.actor(next_state)
             v_ = self.critic(next_state, next_action)
-        target_v = reward + self.config.gamma * v_
+        target_v = reward.unsqueeze(1) + self.config.gamma * v_
         td_error = target_v - self.critic(state, action)
         loss = torch.square(td_error).mean()
 
