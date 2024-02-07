@@ -39,9 +39,14 @@
 * [Q-Learning](CleanRL/algorithms/q_learning)
 * [Sarsa（及Sarsa-Lambda）](CleanRL/algorithms/sarsa)
 * [DQN（及Rainbow）](CleanRL/algorithms/dqn)
+* [SuperMario with Rainbow*](Examples/super_mario)
 * [REINFORCE](CleanRL/algorithms/reinforce)
 * [AC, A2C](CleanRL/algorithms/ac_a2c)
 * [A3C](CleanRL/algorithms/a3c)
+* [DPG](CleanRL/algorithms/dpg_ddpg)
+* DDPG
+* PPO
+* TRPO
 
 ## TODO
 
