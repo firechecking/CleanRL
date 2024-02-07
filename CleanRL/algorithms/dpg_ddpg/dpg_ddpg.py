@@ -6,7 +6,7 @@
 # @Software: CleanRL
 # @Description: dpg_ddpg
 
-import os, time, random
+import os, time, random, copy
 import numpy as np
 import torch
 
@@ -17,6 +17,13 @@ def stack_data(batch_data):
         return torch.stack(batch_data)
     else:
         return torch.tensor(np.array(batch_data))
+
+
+def soft_update(target, source, tau):
+    for target_param, param in zip(target.parameters(), source.parameters()):
+        target_param.data.copy_(
+            target_param.data * (1.0 - tau) + param.data * tau
+        )
 
 
 class DPGConfig():
@@ -33,8 +40,12 @@ class DPGConfig():
         self.action_noise_end = 0.
         self.action_noise_decay = 200
 
+        ############ replay buffer相关参数 ############
         self.replay_buffer_size = 10000
         self.batch_size = 32
+
+        ############ target network相关参数 ############
+        self.tau = 0.001
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -60,6 +71,11 @@ class DPG():
 
         self.replay_buffer = []
 
+        self.actor_target = copy.deepcopy(actor)
+        self.critic_target = copy.deepcopy(critic)
+        self.actor_target.eval()
+        self.critic_target.eval()
+
     def learn(self):
         print('start learn...')
         for epoch in range(1, self.config.epoches + 1):
@@ -83,6 +99,8 @@ class DPG():
                 ############ 参数更新 ############
                 if len(self.replay_buffer) >= self.config.replay_buffer_size:
                     self._one_batch_train()
+                    soft_update(self.actor_target, self.actor, self.config.tau)
+                    soft_update(self.critic_target, self.critic, self.config.tau)
 
                 state = next_state
 
@@ -106,8 +124,8 @@ class DPG():
 
         ############ 训练critic ############
         with torch.no_grad():
-            next_action = self.actor(next_state)
-            v_ = self.critic(next_state, next_action)
+            next_action = self.actor_target(next_state)
+            v_ = self.critic_target(next_state, next_action)
         target_v = reward.unsqueeze(1) + self.config.gamma * v_
         td_error = target_v - self.critic(state, action)
         loss = torch.square(td_error).mean()
