@@ -44,15 +44,15 @@
 * [AC, A2C](CleanRL/algorithms/ac_a2c)
 * [A3C](CleanRL/algorithms/a3c)
 * [DPG](CleanRL/algorithms/dpg_ddpg)
-* DDPG
+* [DDPG](CleanRL/algorithms/dpg_ddpg)
+* [TRPO](CleanRL/algorithms/trpo)
 * PPO
-* TRPO
 
 ## TODO
 
 - [x] 基于价值的强化学习-算法实现
 - [x] 基于价值的强化学习-实践案例 (super-mario)
-- [ ] 基于策略的强化学习-算法实现
+- [x] 基于策略的强化学习-算法实现
 - [ ] 基于策略的强化学习-实践案例 (机械臂/机械狗)
 - [ ] RLHF: 通义千问模型的ppo、dpo训练
 - [ ] Alpha: AlphaZero、MuZero训练五子棋、斗地主、麻将
