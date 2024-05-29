@@ -37,8 +37,11 @@ class PPOConfig():
 
         self.gae_lambda = 0.9
 
+        self.ppo_type = 'clip'  # 支持'clip'、'penalty'，论文中说clip方式效果更好
         self.update_steps = 10
         self.clip_epsilon = 0.2
+        self.penalty_target = 0.01
+        self.penalty_beta = 3
 
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -111,7 +114,7 @@ class PPO():
         log_probs = action_dists.log_prob(actions)
         ratio = torch.exp(log_probs - old_log_probs)
         if return_ratio:
-            return ratio
+            return ratio, action_dists
         return torch.mean(ratio * advantages)
 
     def _one_batch_train(self, batch_data):
@@ -147,14 +150,23 @@ class PPO():
                     old_action_dists = self.actor.distribution(mu, std)
                     old_log_probs = old_action_dists.log_prob(actions)
 
-        with CodeBlock("PPO-Clip"):
+        with CodeBlock("PPO-update"):
             for _ in range(self.config.update_steps):
                 ############ 计算：pi_new/pi_old ############
-                ratio = self.compute_surrogate_obj(states, actions, advantages, old_log_probs, self.actor, return_ratio=True)
+                ratio, new_action_dists = self.compute_surrogate_obj(states, actions, advantages, old_log_probs, self.actor, return_ratio=True)
 
-                ############ 应用公式：min(r*A, clip(r, 1-epsilon, 1+epsilon)*A) ############
-                cliped_ratio = torch.clamp(ratio, 1 - self.config.clip_epsilon, 1 + self.config.clip_epsilon)
-                actor_loss = -torch.mean(torch.min(ratio * advantages, cliped_ratio * advantages))
+                assert self.config.ppo_type in ['clip', 'penalty']
+                if self.config.ppo_type == 'clip':
+                    ############ 应用公式：min(r*A, clip(r, 1-epsilon, 1+epsilon)*A) ############
+                    cliped_ratio = torch.clamp(ratio, 1 - self.config.clip_epsilon, 1 + self.config.clip_epsilon)
+                    actor_loss = -torch.mean(torch.min(ratio * advantages, cliped_ratio * advantages))
+                elif self.config.ppo_type == 'penalty':
+                    ############ 带惩罚项的优化目标：E(ratio*A-beta*KL) ############
+                    kl = torch.distributions.kl_divergence(old_action_dists, new_action_dists)
+                    actor_loss = ratio * advantages - self.config.penalty_beta * kl
+                    actor_loss = -torch.mean(actor_loss)
+                    if kl.mean() > 4 * self.config.penalty_target:  # 如果kl散度过大，退出本轮更新循环
+                        break
 
                 ############ 更新actor ############
                 self.optimizer_actor.zero_grad()
@@ -166,6 +178,14 @@ class PPO():
                 self.optimizer_critic.zero_grad()
                 critic_loss.backward()
                 self.optimizer_critic.step()
+
+            ############ (为训练下一次采样数据)更新kl惩罚项系数 ############
+            if self.config.ppo_type == 'penalty':
+                if kl.mean() < self.config.penalty_target / 1.5:
+                    self.config.penalty_beta /= 2
+                elif kl.mean() > self.config.penalty_target * 1.5:
+                    self.config.penalty_beta *= 2
+                self.config.penalty_beta = np.clip(self.config.penalty_beta, 1e-4, 10)  # 限制惩罚项系数范围
 
     def play(self):
         print('start eval...')
