@@ -46,7 +46,7 @@
 * [DPG](CleanRL/algorithms/dpg_ddpg)
 * [DDPG](CleanRL/algorithms/dpg_ddpg)
 * [TRPO](CleanRL/algorithms/trpo)
-* PPO
+* [PPO](CleanRL/algorithms/ppo)
 
 ## TODO
 
