@@ -79,7 +79,7 @@ class TRPO():
 
                 ############### 模型训练 ###############
                 if len(replay_buffer) == self.config.n_steps or done or epoch_step == self.config.epoch_steps:
-                    if epoch == self.config.epoch_steps:  # 使用unwrapped env，需要手动标记终止状态（终止状态的未来价值为0）
+                    if epoch_step == self.config.epoch_steps:  # 使用unwrapped env，需要手动标记终止状态（终止状态的未来价值为0）
                         replay_buffer[-1][-1] = True
                     ############### 对n_steps数据进行训练 ###############
                     self._one_batch_train(replay_buffer)
@@ -163,11 +163,9 @@ class TRPO():
             next_states = stack_data([data[3] for data in batch_data]).to(torch.float32)
             dones = stack_data([data[4] for data in batch_data]).view(-1, 1).to(torch.int)
 
-        with CodeBlock("Critic更新"):
+        with CodeBlock("计算目标函数"):
             rewards = (rewards + 8.0) / 8.0  # 对Pendulum-v1任务的奖励进行修改,方便训练
             td_targets = rewards + self.config.gamma * self.critic(next_states) * (1 - dones)
-
-        with CodeBlock("计算目标函数"):
             with CodeBlock("优势度"):
                 with torch.no_grad():
                     ############ 单步优势度 ############
